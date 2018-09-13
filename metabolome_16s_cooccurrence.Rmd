@@ -1,0 +1,825 @@
+---
+title: "metabolome_co-occurrence"
+author: "Tim Johnson"
+date: "August 23, 2016"
+output: html_document
+---
+
+So I am going to try to understand the relationships in the metabolome and if there are any bacterial markers for the various metabolites.
+
+```{r organizing data, echo=FALSE, results='hide'}
+library(vegan)
+library(MASS)
+library(ggplot2)
+setwd("~/Desktop/BMD_turkeys/data/")
+#data("varespec")
+#data("dune")
+#For this analysis the species need to be in the columns and the subjects in the rows
+metabolome <- read.csv("metabolome/metabolome.csv", row.names = 1)
+str(metabolome)
+experiment <- read.csv("metabolome/samples.csv")
+rownames(metabolome) <- paste("x", rownames(metabolome), sep = "")
+metabolome_key <- metabolome[,c(2,3,1,4,6,8)]
+experiment$timepoint <- as.factor(experiment$timepoint)
+str(experiment)
+summary(experiment)
+metabolome_ord <- as.data.frame(t(metabolome[,9:ncol(metabolome)]))
+str(metabolome_ord)
+metabolome_dist <- vegdist(metabolome_ord)
+metabolome_dca <- decorana(metabolome_ord)
+#metabolome_dca
+
+days <- c(rep("red",18), rep("green", 18), rep("blue", 18))
+treat <- rep(c(rep(16, 6), rep(17, 6), rep(15, 6)),3)
+
+plot(metabolome_dca, type = "n", xlim = c(-2,2), ylim = c(-3,3))
+points(metabolome_dca, display = "spec", cex = 0.3, pch = 21, col = "gray")
+points(metabolome_dca, display = "sites", cex = 1, col = days, pch = treat)
+#summary(metabolome_dca)
+metabolome_dca$rproj
+
+
+
+```
+
+```{r NMDS1}
+metabolome_mds <- metaMDS(metabolome_ord)
+#metabolome_mds
+plot(metabolome_mds, type = "text", display = "sites")
+#data(dune.env)
+```
+
+These are the default base plotting options, but that is ugly and hard to understand. Lets do a tiny bit of work to graph with 
+
+###ggplots2
+
+```{r NMDS, fig.height=3, fig.width=10}
+nmds <- metabolome_mds$points
+nmds_experiment <- merge(nmds, experiment, by.x = 0, by.y = "animal_id")
+#experiment$animal_id
+#row.names(nmds)
+
+qplot(MDS1, MDS2, geom = "point", colour = treatment, shape = timepoint, size = I(3), data = nmds_experiment, facets = .~timepoint)
+
+```
+
+OK this is interesting, when doing a bray-curtis based ordination of the metabolites, there is the most separation on day 7 between the treatment groups. And there is a time progression that day 78 and day 7 are the most different.
+
+###16S data ordination
+
+So we should be able to do almost exactly the same thing with the 16S data, just to see what it looks like and then we can try to see how the two datasets are related.
+
+```{r, echo=FALSE, results='hide'}
+
+otus_table <- read.csv(file = "16s_amplicon/bmd_otu_table.csv")
+turkey_info <- otus_table[,1:7]
+head(turkey_info)
+otus_table[1:10,1:10]
+row.names(otus_table) <- otus_table$Group
+otus_table <- otus_table[,-1:-8]
+str(turkey_info)
+summary(turkey_info)
+levels(turkey_info$timepoint)
+turkey_info$timepoint <- as.factor(turkey_info$timepoint)
+head(rowSums(otus_table), 20)
+```
+
+So we know that the samples were subsampled to 3032 sequences from the rowSums(otus_table)
+
+There are only 160 jejunum contents, likely because there was little material and not enough sequences were obtained and they got removed at the subsampling step.
+
+I keep the mock just to see what they look like.
+
+```{r }
+otus_mds <- metaMDS(otus_table)
+#otus_mds
+#Stress = 0.129
+
+otus_mds_turkeys <- merge(otus_mds$points, turkey_info, by.x = 0, by.y = "Group")
+#experiment$animal_id
+#row.names(nmds)
+
+qplot(MDS1, MDS2, geom = "point", colour = treatment, size = I(2), alpha = I(0.5), data = otus_mds_turkeys, facets = timepoint~location)
+
+```
+
+OK so a few things. Seems like there are more early effects than later effects. But its difficult to see. I gotta take out the mock community to aid in our ability to see.
+
+```{r mock only}
+mock <- turkey_info$treatment=="mock"
+
+otus_table_mock <- otus_table[mock,]
+tail(sort(colSums(otus_table_mock)), 50)
+```
+
+```{r}
+keep <- turkey_info$treatment!="mock"
+head(keep)
+otus_table2 <- otus_table[keep,]
+
+
+
+otus_mds2 <- metaMDS(otus_table2)
+#otus_mds2
+#Stress = 0.125
+
+otus_mds2_turkeys <- merge(otus_mds2$points, turkey_info, by.x = 0, by.y = "Group")
+#experiment$animal_id
+#row.names(nmds)
+
+qplot(MDS1, MDS2, geom = "point", colour = treatment, shape = location, size = I(2), alpha = timepoint, data = otus_mds2_turkeys)
+
+qplot(MDS1, MDS2, geom = "point", colour = treatment, size = I(2), alpha = I(0.5), data = otus_mds2_turkeys, facets = timepoint~location)
+
+```
+
+
+So from this I see that the ceca are very different from the ileum and jejunum and there is a time effect, similar to what we saw in the metabolome. Now what if I just consider the same timepoints in the ceca as in the metabolome. The data should be better represented with a smaller dataset. We'll see if the stress goes down.
+
+```{r metabolome matched 16S data, almost}
+keep7 <- turkey_info$timepoint== "7" 
+keep35 <- turkey_info$timepoint== "35" 
+keep78 <- turkey_info$timepoint== "78" 
+keepcc <- turkey_info$location == "cc" 
+summary(keepcc)
+keep <- keep7 + keep35 + keep78 + keepcc
+keep <- keep == 2
+summary(keep)
+otus_table3 <- otus_table[keep,]
+
+
+otus_mds3 <- metaMDS(otus_table3)
+#otus_mds3
+#Stress = 0.116, went down slightly
+
+otus_mds3_turkeys <- merge(otus_mds3$points, turkey_info, by.x = 0, by.y = "Group")
+#experiment$animal_id
+#row.names(nmds)
+
+qplot(MDS1, MDS2, geom = "point", shape = treatment, colour = timepoint, size = I(3), alpha = I(0.75), data = otus_mds3_turkeys)
+```
+```{r, fig.height=3, fig.width=10}
+qplot(MDS1, MDS2, geom = "point", shape = timepoint, colour = treatment, size = I(3), alpha = I(0.95), data = otus_mds3_turkeys, facets = .~timepoint)
+
+otus_table3_dist <- vegdist(otus_table3, method = "bray")
+#otus_table3_dist
+trt <- paste(otus_mds3_turkeys$timepoint, otus_mds3_turkeys$treatment, sep = "")
+anosim_bmd <- anosim(otus_table3_dist, trt)
+plot(anosim_bmd)
+
+anosim(otus_table3, trt, distance = "bray")
+
+
+
+```
+
+###Getting the two datasets together and procrutes analysis.
+
+```{r metabolome matched 16S data and procrustes part 1, fig.height=10, fig.width=5}
+library(dplyr)
+cleaned16S <- semi_join(turkey_info, experiment, by = c("turkey" = "animal_id"))
+cleaned16S_cc <- as.data.frame(subset(cleaned16S, location == "cc"))
+cleaned_experiment <- semi_join(experiment, cleaned16S_cc, by = c("animal_id" = "turkey"))
+
+
+##Clean up the OTU table to only include those samples in the metabolome
+
+group <- row.names(otus_table)
+otus_table$group <- group
+
+otus_table_cleaned <- semi_join(otus_table, cleaned16S_cc, by = c("group" = "Group"))
+otus_table_cleaned[1:10,1:10]
+row.names(otus_table_cleaned) <- otus_table_cleaned$group
+otus_table_cleaned <- otus_table_cleaned[,-(ncol(otus_table_cleaned))]
+otus_table <- otus_table[,-ncol(otus_table)]
+
+##Clean up the metabolome to only include samples in the 16S dataset (3 were missing)
+turkey <- row.names(metabolome_ord)
+metabolome_ord$turkeys <- turkey
+str(metabolome_ord)
+metabolome_ord <- metabolome_ord[,-714]
+
+metabolome_ord_cleaned <- semi_join(metabolome_ord, cleaned_experiment, by = c("turkeys" = "animal_id"))
+metabolome_ord_cleaned[1:10,700:713]
+str(metabolome_ord_cleaned)
+row.names(metabolome_ord_cleaned) <- metabolome_ord_cleaned$turkey
+metabolome_ord_cleaned <- metabolome_ord_cleaned[,-(ncol(metabolome_ord_cleaned))]
+metabolome_ord <- metabolome_ord[,-(ncol(metabolome_ord))]
+
+## New Metabolome NMDS
+metabolome_cleaned_mds <- metaMDS(metabolome_ord_cleaned, trymax = 100)
+metabolome_cleaned_mds$converged
+metabolome_cleaned_mds$stress
+##Stress = 0.124
+metab_nmds <- merge(metabolome_cleaned_mds$points, cleaned_experiment, by.x = 0, by.y = "animal_id")
+qplot(MDS1, MDS2, geom = "point", colour = treatment, shape = timepoint, size = I(3), data = metab_nmds, facets = timepoint~.)
+
+## New 16S NMDS
+otus_table_cleaned_mds <- metaMDS(otus_table_cleaned, trymax = 100)
+otus_table_cleaned_mds$stress
+otus_table_cleaned_mds$converged
+##Stress = 0.113
+otus_table_cleaned_nmds <- merge(otus_table_cleaned_mds$points, cleaned16S_cc, by.x = 0, by.y = "Group")
+qplot(MDS1, MDS2, geom = "point", colour = treatment, shape = timepoint, size = I(3), data = otus_table_cleaned_nmds, facets = timepoint~.)
+
+
+days <- c(rep("green",17), rep("red", 18), rep("blue", 16))
+treat <- c(rep(16, 6), rep(17, 6), rep(15, 5), rep(16, 6), rep(17, 6), rep(15, 6), rep(16, 6), rep(17, 5), rep(15, 5))
+sizes <- c(rep(.75, 6), rep(1, 6), rep(1.3, 5), rep(.75, 6), rep(1, 6), rep(1.3, 6), rep(.75, 6), rep(1, 5), rep(1.3, 5))
+```
+
+```{r}
+plot(procrustes(otus_table_cleaned_mds, metabolome_cleaned_mds))
+points(otus_table_cleaned_mds, display = "sites", col = days, pch = treat, cex = sizes)
+#text(otus_table_cleaned_mds, display = "sites")
+
+```
+
+In this plot the colored point are the 16S data and the open circles are the metabolomes, small circles are control, medium triangles are sub, and large squares are therapeutic, green is day7, red is day 35 and blue is day 78.
+
+###Mantel Test
+This tests the question: are the two distance matrices related?
+
+```{r}
+
+
+otu.dist <- vegdist(otus_table_cleaned) # Bray-Curtis
+metabolome.dist <- vegdist(metabolome_ord_cleaned)
+mantel(otu.dist, metabolome.dist)
+mantel(otu.dist, metabolome.dist, method="spear")
+
+
+```
+
+So I feel like this is not very informative, but the distance matrices are correlated. Seems like an impetus to continue looking for connections.
+
+```{r, fig.height=10, fig.length=10}
+library("gplots")
+samples <- paste(cleaned_experiment$animal_id, cleaned_experiment$group_description, sep = "_")
+metabolome_matrix <- as.matrix(log(metabolome_ord_cleaned, 2))
+paste(row.names(metabolome_matrix), samples, sep = ".")
+row.names(metabolome_matrix) <- samples
+
+heatmap.2(metabolome_matrix, col=bluered, symkey=TRUE, denscol = F, density.info = "none", trace = "none", margins = c(6,8))
+
+heatmap.2(metabolome_matrix, dendrogram = "column", Rowv = F, col=bluered, symkey=TRUE, denscol = F, density.info = "none", trace = "none", margins = c(6,8))
+```
+
+
+### On to Co-occurrence.
+So to do this I am borrowing code from Ryan Williams still. I don't have this arranged into a reusable script... That would be good if I did, but I always am lazy... I should work on that another day. So I need to:
+1. merge the metabolome and otu_tables
+2. subset by treatment
+
+```{r co-occurrence setup}
+
+str(otus_table_cleaned2)
+otus_table_cleaned2 <- merge(cleaned16S_cc, otus_table_cleaned, by.x = "Group", by.y = 0)
+otus_metabolome <- merge(otus_table_cleaned2, metabolome_ord_cleaned, by.x = "turkey", by.y = 0)
+#otus_metabolome <- as.integer(otus_metabolome)
+#To do co-occurrence, make sure you have these libraries
+library(Hmisc)
+library(plyr)
+library(reshape2)
+library(igraph)
+library(fdrtool)
+library(GGally)
+library(intergraph)
+library(sna)
+library(stats)
+# this is the data
+dataset <- otus_metabolome
+summary(dataset)
+
+#REQUIRED ENTRY: define number of metadata columns
+metadata <- 7
+
+zeros <- colSums(dataset[,c(-1:-(metadata))])>0
+summary(zeros)
+dataset <- dataset[,zeros]
+head(dataset)
+datasetn<-dataset
+datasetn[datasetn==0]<-NA
+# we are going to create a network per treatment
+head(dataset[,1:20])
+head(datasetn[,1:20])
+summary(dataset$treatment)
+treatments<-as.vector(unique(dataset$treatment))
+treatments
+#treatments<-treatments[2:5]
+#test<-dataset[,-c(1:3)]
+#rm(test)
+final_results<-data.frame()
+
+for(i in 1:length(treatments)){
+	print(paste("started ",treatments[i],sep=""))
+  #subset the data for a particular treatment
+	temp<-subset(dataset, treatment==treatments[i])
+	tempn<-subset(datasetn, treatment==treatments[i])
+	# making an object that has all the results in it (both rho and P values)
+	results<-rcorr(as.matrix(temp[,-c(1:metadata)]),type="spearman")
+	resultsn<-rcorr(as.matrix(tempn[,-c(1:metadata)]),type="spearman")
+	results_pearson<-rcorr(as.matrix(temp[,-c(1:metadata)]),type="pearson")
+	results_hd<-hoeffd(as.matrix(temp[,-c(1:metadata)]))
+	#make two seperate objects for p-value and correlation coefficients
+	rho_sp<-results$r
+	rho_pear <- results_pearson$r
+	sp_ps <- results$P
+	pear_ps <- results_pearson$P
+	ns <- resultsn$n
+	ds <- results_hd$D
+  ds_ps <- results_hd$P
+	# going to melt these objects to 'long form' where the first two columns make up the pairs of OTUs, I am also removing NA's as they are self-comparisons, not enough data, other bad stuff
+	sp_ps_melt <- na.omit(melt(sp_ps))
+	pear_ps_melt <- na.omit(melt(pear_ps))
+	ds_ps_melt <- na.omit(melt(ds_ps))
+	#creating a qvalue based on FDR
+	sp_ps_melt$spearman_qval <- fdrtool(sp_ps_melt$value, statistic="pvalue", plot=F,verbose=F)$qval
+	pear_ps_melt$pearson_qval <- fdrtool(pear_ps_melt$value, statistic="pvalue", plot=F,verbose=F)$qval
+	ds_ps_melt$D_qval <- fdrtool(ds_ps_melt$value, statistic="pvalue", plot=F,verbose=F)$qval
+	#making column names more relevant
+	
+	names(sp_ps_melt)[3] <- "sp_pval"
+	names(pear_ps_melt)[3] <- "pear_pval"
+	names(ds_ps_melt)[3] <- "ds_pval"
+	# if you are of the opinion that it is a good idea to subset your network based on adjusted P-values (qval in this case), you can then subset here
+# 	sp_ps_sub<-subset(sp_ps_melt, qval < 0.05)
+# 	ds_ps_sub<-subset(ds_ps_melt, qval < 0.05)
+	# now melting the rhos, note the similarity between ps_melt and rhos_melt
+	spear_melt<-na.omit(melt(rho_sp))
+	names(spear_melt)[3] <- "rho_sp"
+	
+	pear_melt <- na.omit(melt(rho_pear))
+	names(pear_melt)[3] <- "rho_pear"
+	
+	ds_melt<-na.omit(melt(ds))
+	names(ds_melt)[3] <- "D"
+	
+	# now melting the ns
+	ns_melt <- (melt(ns))
+	names(ns_melt)[3] <- "n"
+	#merging together 
+	spear_merge <- merge(spear_melt, sp_ps_melt, by = c("Var1","Var2"))
+	pear_merge <- merge(pear_melt, pear_ps_melt, by = c("Var1","Var2"))
+	ds_merge <- merge(ds_melt, ds_ps_melt, by = c("Var1","Var2"))
+	
+	spear_pear_merge <- merge(spear_merge, pear_merge,by = c("Var1","Var2"))
+	spear_pear_ds_merge <- merge(spear_pear_merge, ds_merge,by = c("Var1","Var2"))
+
+	min_n <- .5 * nrow(temp)
+  merged<-merge(spear_pear_ds_merge, subset(ns_melt, n >= min_n), by = c("Var1","Var2"))
+
+	merged$trt<-treatments[i]
+	merged_filtered <- subset(merged, spearman_qval < 0.05 | D_qval < 0.05 | pearson_qval < 0.05)
+	final_results <- rbind(final_results, merged_filtered)
+	print(paste("finished ",treatments[i],sep=""))
+}
+
+unique(final_results$trt)
+  write.csv(final_results, file = "cooccurrence/otus_metabolome_final_results_20161010.csv", quote = FALSE)
+  
+  
+setwd("~/Desktop/BMD_turkeys/data/")
+library("openxlsx")
+  
+final_results <- read.csv(file = "cooccurrence/otus_metabolome_final_results_20161010.csv")
+final_results <- final_results[,-1]
+metabolome_stats <- read.csv(file = "metabolome/metabolome_statistical_shifts.csv")
+otus_key <- read.csv(file = "16s_amplicon/otu_key_genus.csv")
+metabolome_otus_key <- read.csv(file = "cooccurrence/Ryan_method/metabolome_statistical_shifts_otu_key.csv")
+random_forest <- read.xlsx("cooccurrence/Ryan_method/RandomForest_transpose.xlsx")
+final_results_stats <- merge(final_results, metabolome_otus_key, by.x = "Var1", by.y = "Pathway_Sort_Order")
+final_results_stats2 <- merge(final_results_stats, metabolome_otus_key, by.x = "Var2", by.y = "Pathway_Sort_Order")
+final_results_stats2_sig <- as.data.frame(subset(final_results_stats2, (treatment_qvalue.x < 0.05 | treatment_qvalue.y < 0.05) & abs(rho_sp) > 0.75 & spearman_qval < 0.05))
+otu_sig_subset <- final_results_stats2_sig[grep("Otu", final_results_stats2_sig$Var2),]
+otu_sig_subset <- rbind(otu_sig_subset, final_results_stats2_sig[grep("Otu", final_results_stats2_sig$Var1),])
+write.table(final_results_stats2_sig, file = "cooccurrence/Ryan_method/final_resultsfinal_results_stats2_sig.csv", quote = F, sep = "|")
+write.xlsx(subset(otu_sig_subset, trt=="ctrl"), file = "cooccurrence/Ryan_method/otu_sig_subset_ctrl.xlsx", colNames = TRUE)
+write.xlsx(subset(otu_sig_subset, trt=="sub"), file = "cooccurrence/Ryan_method/otu_sig_subset_sub.xlsx", colNames = TRUE)
+write.xlsx(subset(otu_sig_subset, trt=="ther"), file = "cooccurrence/Ryan_method/otu_sig_subset_ther.xlsx", colNames = TRUE)
+
+
+
+
+
+
+
+
+
+# to make a network from the results
+# we need to pass the relevant relationships (pairs across columns Var1 and Var2) to graph.edgelist as a matrix, note I am subsetting for a particular treatment within the arguments
+head(final_results)
+g<-graph.edgelist(as.matrix(subset(final_results, trt=="ther")[,1:2]),directed=F)
+
+#are relationships different
+ggplot(final_results)+geom_density(aes(rho,fill=trt),alpha=0.5)+theme_bw(base_size=17)+theme(aspect.ratio=1)+scale_fill_manual(name="Treatment",values=c("red","black", "green"))
+
+# now we can calculate stats for the network
+final_stats<-data.frame()
+for(i in 1:length(unique(final_results$trt))){
+	
+	temp<-subset(final_results, trt==i)
+	print(head(temp))
+	temp.graph<-(graph.edgelist(as.matrix(temp[,c(1,2)]),directed=FALSE))
+	E(temp.graph)$weight<-temp$rho
+	temp.graph<-simplify(temp.graph)
+	N_edges<-ecount(temp.graph)
+
+	#stats<-data.frame(row.names((as.matrix(igraph::degree(temp.graph,normalized=TRUE)))),(as.matrix(igraph::degree(temp.graph,normalized=TRUE))),(as.matrix(igraph::betweenness(temp.graph))))
+	names(stats)<-c("otus","norm_degree","betweenness")
+	stats$trt<-as.vector(unique(final_results$trt))[i]
+	stats$clustering_coeff<-igraph::transitivity(temp.graph,type="global")
+	stats$clustering_coeff_rand<-igraph::transitivity(igraph::erdos.renyi.game(length(V(temp.graph)),length(E(temp.graph)),type="gnm"))
+	stats$cluster_ratio<-stats$clustering_coeff/stats$clustering_coeff_rand
+	final_stats<-rbind(final_stats,stats)
+	print(paste("finished ",as.vector(unique(final_results$trt))[i],sep=""))
+}
+
+# is the structure changing?
+ddply(final_stats,.(trt),summarise,mean(cluster_ratio))
+for (i in treatments){
+  print(head(arrange(subset(final_stats,trt==i), -norm_degree),10))
+  print(head(arrange(subset(final_stats,trt==i), -betweenness),10))
+}
+
+head(arrange(subset(final_stats,trt=="carb"), -norm_degree),10)
+OTU 166 d:Bacteria,p:Firmicutes,c:Negativicutes,o:Selenomonadales,f:Acidaminococcaceae
+OTU 2080 d:Bacteria,p:"Bacteroidetes"
+OTU 1864 d:Bacteria
+
+head(arrange(subset(final_stats,trt=="non-foaming"), -betweenness),10)
+OTU 1864 d:Bacteria
+OTU 1601  d:Bacteria,p:"Proteobacteria",c:Betaproteobacteria
+
+# whats the relationship between these statistics?
+ggplot(final_stats)+geom_point(aes(x=norm_degree,y=betweenness,color=trt),alpha=0.5)+scale_y_log10()+theme_bw(base_size=17)+labs(x="Normalized Degree",y="Betweenness")+theme(aspect.ratio=1)+scale_colour_manual(name="Treatment",values=c("red","black", "green", "yellow"))
+
+
+
+
+# let's make plots with the most significant relationships
+head(final_results)
+dim(final_results)
+hist(final_results$rho_sp)
+
+final_results$abs_rho <- abs(final_results$rho_pear)
+unique(final_results$trt)
+strong_results<-subset(final_results, abs_rho >= 0.70)
+dim(strong_results)
+hist(strong_results$rho_pear)
+treatments
+unique(strong_results$trt)
+write.csv(strong_results, file = "bmd_strong_results.csv", quote = FALSE)
+strong_results <-read.csv(file = "bmd_strong_results.csv")
+strong_results <- strong_results[,-6:-8]
+write.csv(subset(strong_results, trt=="ctrl"), file = "bmd_ctrl_strong_results.csv", quote = FALSE)
+write.csv(subset(strong_results, trt=="ther"), file = "bmd_ther_strong_results.csv", quote = FALSE)
+write.csv(subset(strong_results, trt=="sub"), file = "bmd_sub_strong_results.csv", quote = FALSE)
+strong_results_ctrl <- as.data.frame(subset(strong_results, trt=="ctrl"))
+strong_results_ther <- as.data.frame(subset(strong_results, trt=="ther"))
+strong_results_sub <- as.data.frame(subset(strong_results, trt=="sub"))
+
+#Get metabolome metadata
+setwd("~/Desktop/BMD_turkeys/data/cooccurrence/Rdata_out/")
+metab_metadata <- read.xlsx("metab_modules_summary.xlsx")
+metab_metadata <- metab_metadata[,c(-8, -9, -16, -18)]
+metab_metadata$metabolites_id <-  gsub(pattern = "x", replacement = "", metab_metadata$metabolites_id, fixed = TRUE)
+
+#Get OTU metadata
+library("openxlsx")
+otu_metadata <- read.xlsx("otus_module_summary.xlsx")
+otu_metadata <- otu_metadata[,c(-3, -6, -9, -11)]
+otu_metadata$treatment_qvalue <- 1
+otu_metadata$interaction_qvalue <- 1
+
+#combine both
+names(metab_metadata) <- names(otu_metadata)
+combined_key <- rbind(metab_metadata, otu_metadata)
+str(metab_metadata)
+str(otu_metadata)
+str(combined_key)
+str(strong_results)
+
+#Merge with strong_results
+test_merge <- merge(strong_results, combined_key, by.x = "Var1", by.y = "otus_id", all.x = T)
+test_merge <- merge(test_merge, combined_key, by.x = "Var2", by.y = "otus_id", all.x = T)
+
+write.table(subset(test_merge, trt=="ctrl"), file = "bmd_ctrl_strong_results_merge.txt", quote = FALSE, sep = "|")
+write.table(subset(test_merge, trt=="ther"), file = "bmd_ther_strong_results_merge.txt", quote = FALSE, sep = "|")
+write.table(subset(test_merge, trt=="sub"), file = "bmd_sub_strong_results_merge.txt", quote = FALSE, sep = "|")
+
+
+library(ggplot2)
+qplot(x216, Otu00350, colour = timepoint, data = otus_metabolome, facets = .~treatment)
+qplot(x216, x1, colour = timepoint, data = otus_metabolome, facets = .~treatment)
+
+
+
+degree_ctrl <- count(strong_results_ctrl$Var1)
+colnames(degree_ctrl) <- c("OTU","ctrl_degree")
+degree_ther <- count(strong_results_ther$Var1)
+colnames(degree_ther) <- c("OTU","ther_degree")
+degree_sub <- count(strong_results_sub$Var1)
+colnames(degree_sub) <- c("OTU","sub_degree")
+
+
+degree_all <- merge(degree_ctrl, degree_sub, all = T)
+degree_all <- merge(degree_all, degree_ther, all = T)
+degree_all$DH_sub <- degree_all$sub_degree - degree_all$ctrl_degree
+degree_all$DH_ther <- degree_all$ther_degree - degree_all$ctrl_degree
+otu_key <- read.csv(file = "16s_amplicon/otu_key_genus.csv")
+str(otu_key)
+str(degree_all)
+colnames(otu_key)
+metabolome_key$OTU <- rownames(metabolome_key)
+combined_key <- bind_rows(metabolome_key, otu_key)
+
+degree_all <- left_join(degree_all, combined_key)
+
+strong_results_ther_tryptophan <- as.data.frame(subset(strong_results_ther, Var1=="x216"))
+
+
+for (i in treatments){
+  print(i)
+  temp.graph<-(graph.edgelist(as.matrix(subset(strong_results, trt==i)[,c(1,2)]),directed=FALSE))
+  E(temp.graph)$weight<-subset(strong_results, trt==i)$rho
+  temp.graph<-simplify(temp.graph)
+  temp.graph
+  
+  gnet<-asNetwork(temp.graph)
+  df<-asDF(gnet)
+  head(df$vertexes)
+  
+  
+  ggnet(gnet, size=0, method="kamadakawaii")+geom_point()
+  
+  # lets color by phylum
+  vs<-df$vertexes
+  phyla<-read.table("~/Desktop/CarbadoxPigs/CAZy/CAZy_co-occurrence/phylum.txt",sep="\t",check.names=F,header=T)
+  head(phyla)
+  head(vs)
+  vs_phyla<-merge(vs, phyla, by.x="vertex.names",by.y="OTUs")
+  vs_phyla<-arrange(vs_phyla,intergraph_id)
+  print(head(vs_phyla))
+  print(ggnet(gnet, label.nodes=T, label.size = 2, size=1, segment.color = "black", method="kamadakawaii")+geom_point(aes(colour=vs_phyla$phylum, fill = i))+scale_colour_manual(values=c("#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00","#ffff33","#a65628","grey50"))+scale_fill_discrete(name=i))
+  ggsave(filename = paste("~/Desktop/CarbadoxPigs/CAZy/CAZy_co-occurrence/20160112/",i,"_require5-6_label.pdf", sep=""))
+  print(ggnet(gnet, label.nodes=F, label.size = 2, size=1, segment.color = "black", method="kamadakawaii")+geom_point(aes(colour=vs_phyla$phylum, fill = i))+scale_colour_manual(values=c("#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00","#ffff33","#a65628","grey50")))
+  ggsave(filename = paste("~/Desktop/CarbadoxPigs/CAZy/CAZy_co-occurrence/20160112/",i,"_require5-6_nolabel.pdf", sep=""))
+  print(paste("finished", i))
+}
+
+write.csv(strong_results, file="~/Desktop/CarbadoxPigs/CAZy/CAZy_co-occurrence/Strong_results.csv")
+
+```
+
+###Co-occurrence with each timepoint separately
+
+Since there are different disturbances at each time point and the bacterial numbers are relative abundances, perhaps we should only consider a treatment at a certain timepoint.
+
+```{r co-occurrence setup}
+
+
+#To do co-occurrence, make sure you have these libraries
+library(Hmisc)
+library(plyr)
+library(reshape2)
+library(igraph)
+library(fdrtool)
+library(GGally)
+library(intergraph)
+library(sna)
+library(stats)
+# this is the data
+dataset <- otus_metabolome
+summary(dataset)
+
+#REQUIRED ENTRY: define number of metadata columns
+metadata <- 7
+
+zeros <- colSums(dataset[,c(-1:-(metadata))])>0
+summary(zeros)
+dataset <- dataset[,zeros]
+head(dataset)
+datasetn<-dataset
+datasetn[datasetn==0]<-NA
+# we are going to create a network per treatment
+head(dataset[,1:20])
+head(datasetn[,1:20])
+summary(dataset$treatment)
+treatments<-as.vector(unique(dataset$treatment))
+treatments
+timepoints <- as.vector(unique(dataset$timepoint))
+timepoints
+#treatments<-treatments[2:5]
+#test<-dataset[,-c(1:3)]
+#rm(test)
+day_trt_final_results<-data.frame()
+for (t in 1:length(timepoints)){
+  temp1<-subset(dataset, timepoint==timepoints[t])
+  tempn1<-subset(datasetn, timepoint==timepoints[t])
+  for(i in 1:length(treatments)){
+    print(paste("started ", treatments[i], timepoints[t], sep=""))
+    #subset the data for a particular treatment
+    temp<-subset(temp1, treatment==treatments[i])
+    tempn<-subset(tempn1, treatment==treatments[i])
+    # making an object that has all the results in it (both rho and P values)
+    results<-rcorr(as.matrix(temp[,-c(1:metadata)]),type="spearman")
+    resultsn<-rcorr(as.matrix(tempn[,-c(1:metadata)]),type="spearman")
+    results_pearson<-rcorr(as.matrix(temp[,-c(1:metadata)]),type="pearson")
+    results_hd<-hoeffd(as.matrix(temp[,-c(1:metadata)]))
+    #make two seperate objects for p-value and correlation coefficients
+    rho_sp<-results$r
+    rho_pear <- results_pearson$r
+    sp_ps <- results$P
+    pear_ps <- results_pearson$P
+    ns <- resultsn$n
+    ds <- results_hd$D
+    ds_ps <- results_hd$P
+    # going to melt these objects to 'long form' where the first two columns make up the pairs of OTUs, I am also removing NA's as they are self-comparisons, not enough data, other bad stuff
+    sp_ps_melt <- na.omit(melt(sp_ps))
+    pear_ps_melt <- na.omit(melt(pear_ps))
+    ds_ps_melt <- na.omit(melt(ds_ps))
+    #creating a qvalue based on FDR
+    sp_ps_melt$spearman_qval <- fdrtool(sp_ps_melt$value, statistic="pvalue", plot=F,verbose=F)$qval
+    pear_ps_melt$pearson_qval <- fdrtool(pear_ps_melt$value, statistic="pvalue", plot=F,verbose=F)$qval
+    ds_ps_melt$D_qval <- fdrtool(ds_ps_melt$value, statistic="pvalue", plot=F,verbose=F)$qval
+    #making column names more relevant
+    
+    names(sp_ps_melt)[3] <- "sp_pval"
+    names(pear_ps_melt)[3] <- "pear_pval"
+    names(ds_ps_melt)[3] <- "ds_pval"
+    # if you are of the opinion that it is a good idea to subset your network based on adjusted P-values (qval in this case), you can then subset here
+    # 	sp_ps_sub<-subset(sp_ps_melt, qval < 0.05)
+    # 	ds_ps_sub<-subset(ds_ps_melt, qval < 0.05)
+    # now melting the rhos, note the similarity between ps_melt and rhos_melt
+    spear_melt<-na.omit(melt(rho_sp))
+    names(spear_melt)[3] <- "rho_sp"
+    
+    pear_melt <- na.omit(melt(rho_pear))
+    names(pear_melt)[3] <- "rho_pear"
+    
+    ds_melt<-na.omit(melt(ds))
+    names(ds_melt)[3] <- "D"
+    
+    # now melting the ns
+    ns_melt <- (melt(ns))
+    names(ns_melt)[3] <- "n"
+    #merging together 
+    spear_merge <- merge(spear_melt, sp_ps_melt, by = c("Var1","Var2"))
+    pear_merge <- merge(pear_melt, pear_ps_melt, by = c("Var1","Var2"))
+    ds_merge <- merge(ds_melt, ds_ps_melt, by = c("Var1","Var2"))
+    
+    spear_pear_merge <- merge(spear_merge, pear_merge,by = c("Var1","Var2"))
+    spear_pear_ds_merge <- merge(spear_pear_merge, ds_merge,by = c("Var1","Var2"))
+    
+    min_n <- .5 * nrow(temp)
+    merged<-merge(spear_pear_ds_merge, subset(ns_melt, n >= min_n), by = c("Var1","Var2"))
+    
+    merged$trt<-treatments[i]
+    merged$time <-timepoints[t]
+    merged_filtered <- subset(merged, spearman_qval < 0.05 | D_qval < 0.05 | pearson_qval < 0.05)
+    day_trt_final_results <- rbind(day_trt_final_results, merged_filtered)
+    print(paste("finished ",treatments[i],timepoints[t], sep=""))
+  }
+}
+
+day_trt_final_results$abs_rho_sp <- abs(day_trt_final_results$rho_sp)
+day_trt_final_results$abs_rho_pear <- abs(day_trt_final_results$rho_pear)
+
+day_trt_final_results2 <- subset(day_trt_final_results, spearman_qval < 0.05 & pearson_qval < 0.05 & n > 4 & abs_rho_sp > .75 & abs_rho_pear > 0.75)
+
+write.csv(day_trt_final_results, file = "cooccurrence/day_trt_cooccurrence_final_results.csv", quote = FALSE)
+
+# to make a network from the results
+# we need to pass the relevant relationships (pairs across columns Var1 and Var2) to graph.edgelist as a matrix, note I am subsetting for a particular treatment within the arguments
+head(day_trt_final_results)
+g<-graph.edgelist(as.matrix(subset(day_trt_final_results, trt=="ther")[,1:2]),directed=F)
+
+#are relationships different
+ggplot(day_trt_final_results)+geom_density(aes(rho,fill=trt),alpha=0.5)+theme_bw(base_size=17)+theme(aspect.ratio=1)+scale_fill_manual(name="Treatment",values=c("red","black", "green"))
+
+# now we can calculate stats for the network
+final_stats<-data.frame()
+for(i in 1:length(unique(day_trt_final_results$trt))){
+	
+	temp<-subset(day_trt_final_results, trt==i)
+	print(head(temp))
+	temp.graph<-(graph.edgelist(as.matrix(temp[,c(1,2)]),directed=FALSE))
+	E(temp.graph)$weight<-temp$rho
+	temp.graph<-simplify(temp.graph)
+	N_edges<-ecount(temp.graph)
+
+	#stats<-data.frame(row.names((as.matrix(igraph::degree(temp.graph,normalized=TRUE)))),(as.matrix(igraph::degree(temp.graph,normalized=TRUE))),(as.matrix(igraph::betweenness(temp.graph))))
+	names(stats)<-c("otus","norm_degree","betweenness")
+	stats$trt<-as.vector(unique(day_trt_final_results$trt))[i]
+	stats$clustering_coeff<-igraph::transitivity(temp.graph,type="global")
+	stats$clustering_coeff_rand<-igraph::transitivity(igraph::erdos.renyi.game(length(V(temp.graph)),length(E(temp.graph)),type="gnm"))
+	stats$cluster_ratio<-stats$clustering_coeff/stats$clustering_coeff_rand
+	final_stats<-rbind(final_stats,stats)
+	print(paste("finished ",as.vector(unique(day_trt_final_results$trt))[i],sep=""))
+}
+
+# is the structure changing?
+ddply(final_stats,.(trt),summarise,mean(cluster_ratio))
+for (i in treatments){
+  print(head(arrange(subset(final_stats,trt==i), -norm_degree),10))
+  print(head(arrange(subset(final_stats,trt==i), -betweenness),10))
+}
+
+# whats the relationship between these statistics?
+ggplot(final_stats)+geom_point(aes(x=norm_degree,y=betweenness,color=trt),alpha=0.5)+scale_y_log10()+theme_bw(base_size=17)+labs(x="Normalized Degree",y="Betweenness")+theme(aspect.ratio=1)+scale_colour_manual(name="Treatment",values=c("red","black", "green", "yellow"))
+
+
+
+
+# let's determine differential hubbing with the most significant relationships
+day_trt_degree <- as.data.frame(combined_key$OTU)
+colnames(day_trt_degree) <- "OTU"
+for (t in timepoints){
+  for (i in treatments){
+    trt_group <- (paste(i,"_", t, sep = ""))
+    print(trt_group)
+    subset_temp <- as.data.frame(subset(day_trt_final_results, trt==i & time==t))
+    print(dim(subset_temp))
+    assign(trt_group, subset_temp)
+    degree_temp <- count(subset_temp$Var1)
+    colnames(degree_temp) <- c("OTU", trt_group)
+    day_trt_degree <- merge(day_trt_degree, degree_temp, all = T)
+  }
+}
+
+library(ggplot2)
+qplot(Otu00002, x1827, colour = timepoint, data = otus_metabolome, facets = .~treatment)
+qplot(x216, x1, colour = timepoint, data = otus_metabolome, facets = .~treatment)
+
+day_trt_degree1 <- merge(day_trt_degree, combined_key, by = "OTU")
+keep <- rowSums(day_trt_degree1[,2:10], na.rm = T) > 0
+day_trt_degree1 <- day_trt_degree1[keep,]
+write.csv(day_trt_degree1, file = "cooccurrence/day_trt_sp_pear_degree1.csv", quote = F)
+
+treatments
+unique(strong_results$trt)
+write.csv(strong_results, file = "bmd_strong_results.csv", quote = FALSE)
+write.csv(subset(strong_results, trt=="ctrl"), file = "bmd_ctrl_strong_results.csv", quote = FALSE)
+write.csv(subset(strong_results, trt=="ther"), file = "bmd_ther_strong_results.csv", quote = FALSE)
+write.csv(subset(strong_results, trt=="sub"), file = "bmd_sub_strong_results.csv", quote = FALSE)
+strong_results_ctrl <- as.data.frame(subset(strong_results, trt=="ctrl"))
+strong_results_ther <- as.data.frame(subset(strong_results, trt=="ther"))
+strong_results_sub <- as.data.frame(subset(strong_results, trt=="sub"))
+
+degree_ctrl <- count(strong_results_ctrl$Var1)
+colnames(degree_ctrl) <- c("OTU","ctrl_degree")
+degree_ther <- count(strong_results_ther$Var1)
+colnames(degree_ther) <- c("OTU","ther_degree")
+degree_sub <- count(strong_results_sub$Var1)
+colnames(degree_sub) <- c("OTU","sub_degree")
+
+
+degree_all <- merge(degree_ctrl, degree_sub, all = T)
+degree_all <- merge(degree_all, degree_ther, all = T)
+degree_all$DH_sub <- degree_all$sub_degree - degree_all$ctrl_degree
+degree_all$DH_ther <- degree_all$ther_degree - degree_all$ctrl_degree
+otu_key <- read.csv(file = "16s_amplicon/otu_key_genus.csv")
+str(otu_key)
+str(degree_all)
+colnames(otu_key)
+metabolome_key$OTU <- rownames(metabolome_key)
+combined_key <- bind_rows(metabolome_key, otu_key)
+
+degree_all <- left_join(degree_all, combined_key)
+
+strong_results_sub_alistipes <- as.data.frame(subset(strong_results_sub, Var1=="Otu00028"))
+
+
+for (i in treatments){
+  print(i)
+  temp.graph<-(graph.edgelist(as.matrix(subset(strong_results, trt==i)[,c(1,2)]),directed=FALSE))
+  E(temp.graph)$weight<-subset(strong_results, trt==i)$rho
+  temp.graph<-simplify(temp.graph)
+  temp.graph
+  
+  gnet<-asNetwork(temp.graph)
+  df<-asDF(gnet)
+  head(df$vertexes)
+  
+  
+  ggnet(gnet, size=0, method="kamadakawaii")+geom_point()
+  
+  # lets color by phylum
+  vs<-df$vertexes
+  phyla<-read.table("~/Desktop/CarbadoxPigs/CAZy/CAZy_co-occurrence/phylum.txt",sep="\t",check.names=F,header=T)
+  head(phyla)
+  head(vs)
+  vs_phyla<-merge(vs, phyla, by.x="vertex.names",by.y="OTUs")
+  vs_phyla<-arrange(vs_phyla,intergraph_id)
+  print(head(vs_phyla))
+  print(ggnet(gnet, label.nodes=T, label.size = 2, size=1, segment.color = "black", method="kamadakawaii")+geom_point(aes(colour=vs_phyla$phylum, fill = i))+scale_colour_manual(values=c("#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00","#ffff33","#a65628","grey50"))+scale_fill_discrete(name=i))
+  ggsave(filename = paste("~/Desktop/CarbadoxPigs/CAZy/CAZy_co-occurrence/20160112/",i,"_require5-6_label.pdf", sep=""))
+  print(ggnet(gnet, label.nodes=F, label.size = 2, size=1, segment.color = "black", method="kamadakawaii")+geom_point(aes(colour=vs_phyla$phylum, fill = i))+scale_colour_manual(values=c("#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00","#ffff33","#a65628","grey50")))
+  ggsave(filename = paste("~/Desktop/CarbadoxPigs/CAZy/CAZy_co-occurrence/20160112/",i,"_require5-6_nolabel.pdf", sep=""))
+  print(paste("finished", i))
+}
+
+write.csv(strong_results, file="~/Desktop/CarbadoxPigs/CAZy/CAZy_co-occurrence/Strong_results.csv")
+
+```

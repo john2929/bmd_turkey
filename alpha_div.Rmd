@@ -1,0 +1,26 @@
+---
+title: "Diversity Boxplots"
+author: "Tim Johnson"
+date: "August 31, 2016"
+output: html_document
+---
+
+Produce boxplots of Richness estimates from the BMD experiment
+
+```{r}
+library(ggplot2)
+setwd("~/Desktop/BMD_turkeys/data/")
+
+alpha_div <- read.csv(file = "BMD_alpha_diversity.csv", header = T)
+unique(alpha_div$day)
+str(alpha_div)
+alpha_div$trt_day <- paste(alpha_div$trt, alpha_div$day, sep = "_")
+str(alpha_div)
+subset(alpha_div, trt_day=="ctrl_14")
+
+qplot(trt, chao, geom = "boxplot", colour = trt, data = subset(alpha_div, location == "cc"), facets = .~day)
+
+
+```
+
+
