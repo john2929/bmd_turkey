@@ -10,7 +10,7 @@ This Markdown document outlines how the 16S output from mothur were used to crea
 Produce boxplots of diversity estimates from the BMD experiment
 
 ```{r setup}
-knitr::opts_knit$set(root.dir = '~/USDA_laptop/Desktop/BMD_turkeys/presentation/manuscript/Submission/to_github/')
+knitr::opts_knit$set(root.dir = '~/PATH/TO/BMD_TURKEY')
 
 ```
 
