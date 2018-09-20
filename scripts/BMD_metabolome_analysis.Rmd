@@ -8,7 +8,7 @@ output: html_document
 
 
 ```{r setup}
-knitr::opts_knit$set(root.dir = '~/USDA_laptop/Desktop/BMD_turkeys/presentation/manuscript/Submission/to_github/')
+knitr::opts_knit$set(root.dir = '~/PATH/TO BMD_TURKEY')
 ```
 
 ```{r}
