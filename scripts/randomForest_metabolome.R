@@ -1,4 +1,4 @@
-setwd(dir = "~/USDA_laptop/Desktop/BMD_turkeys/presentation/manuscript/Submission/to_github/")
+setwd(dir = "~/PATH TO BMD_TURKEY")
 #load data and normalize it
 library(randomForest)
 library(dplyr)
