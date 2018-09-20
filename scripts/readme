@@ -1,0 +1,21 @@
+R scripts to recreate the analysis and figures presented in the paper
+
+In-feed bacitracin methylene disalicylate modulates the turkey microbiota and metabolome in a dose-dependent manner
+
+by TA Johnson et al.
+
+The script BMD_16S_analysis.Rmd completes the following analyses for the 16S amplicon dataset:
+  1. Alpha diversity statistical comparisons and graphics
+  2. Beta diversity calculation, statistics (PERMANOVA), and graphics
+  3. Graphical representation of the composition of the jejunal, ileal and cecal microbial communities in stacked bar plots.
+  
+  
+The script BMD_metabolome_analysis.Rmd completes the following analyses for the metabolome dataset:
+  1. Beta diversity calculation, statistics (PERMANOVA), and graphics
+  2. Count of differentially present metabolites due to BMD treatment grouped by both major and sub nutrient families
+  
+
+The script randomForest_metabolome.R completes the following analyses for the metabolome dataset:
+  1. Calculation and graphical representation of distinguishing metabolites in pairwise comparisons 
+     between time-matched BMD treatment groups
+  2. Compilation of the most distinguishing metabolites in all comparisons in a single graphical output.
