@@ -1,0 +1,556 @@
+---
+title: "16S mothur analysis"
+author: "Tim Johnson"
+date: "8/1/2018"
+output: html_document
+---
+
+This Markdown document outlines how the 16S output from mothur were used to create the figures in the paper.
+
+Produce boxplots of diversity estimates from the BMD experiment
+
+```{r setup}
+knitr::opts_knit$set(root.dir = '~/USDA_laptop/Desktop/BMD_turkeys/presentation/manuscript/Submission/to_github/')
+
+```
+
+```{r}
+library(ggplot2)
+library(fdrtool)
+library(tidyr)
+library(dplyr)
+
+alpha_div <- read.table(file = "data/bmd_only.opti_mcc.groups.summary", sep = "\t", header = T)
+design <- read.table(file = "data/BMD_design.txt", sep = "\t", header = TRUE)
+alpha_div_merge <- merge(alpha_div, design, by.x = "group", by.y = "name")
+unique(alpha_div_merge$day)
+str(alpha_div_merge)
+alpha_div_merge$day <- factor(alpha_div_merge$day)
+alpha_div_merge$trt_day <- paste(alpha_div_merge$trt, alpha_div_merge$day, sep = "_")
+alpha_div_merge$location <- factor(alpha_div_merge$location, levels = c("jc", "ic", "cc"))
+str(alpha_div_merge)
+
+
+```
+
+```{r}
+#Get figures for manuscript.
+chao <- ggplot(alpha_div_merge, aes(trt, chao)) + 
+  geom_boxplot(aes(color = trt)) + 
+  ylim(c(0,650)) +
+  facet_grid(location~day) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+ggsave("output/chao_contents.png")
+
+shannon <- ggplot(alpha_div_merge, aes(trt, shannon)) + 
+  geom_boxplot(aes(color = trt)) + 
+  ylim(c(0,6)) +
+  facet_grid(location~day)  +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+ggsave("output/shannon_contents.png")
+
+```
+
+```{r}
+
+##Run the ANOVAs for statistics
+locations <- unique(alpha_div_merge$location)
+days <- unique(alpha_div_merge$day)
+ad_metrics <- c("sobs", "chao", "ace", "invsimpson", "shannon")
+rm(tukey_summary)
+
+for(l in locations){
+  print(l)
+  for(d in days){
+    print(d)
+    for(m in ad_metrics){
+      print(m)
+      aov_temp <- aov(get(m) ~ trt, data = subset(alpha_div_merge, location == l & day == d))
+      summary(aov_temp)
+      if (summary(aov_temp)[[1]][["Pr(>F)"]][[1]]){
+        tukey_out <- TukeyHSD(aov_temp)
+        tukey_out_df <- as.data.frame(tukey_out$trt)
+        tukey_out_df$location <- l
+        tukey_out_df$day <- d
+        tukey_out_df$ad_metric <- m
+        if (exists("tukey_summary")) {
+          tukey_summary <- rbind(tukey_summary, tukey_out_df)
+        } else {
+          tukey_summary <- tukey_out_df
+        }
+      }
+    }
+  }
+}
+tukey_summary$q.value <- p.adjust(tukey_summary$`p adj`, method = "BH")
+write.table(tukey_summary, file = "output/tukey_summary.txt", sep = "\t", quote = FALSE)
+#This output of the statistical testing was used to mark which comparisons were statistically different in the graphs showing chao and shannon.
+```
+
+Now we need to move on to the beta diversity part. For this I adopt some code from Jules.
+
+```{r, echo=FALSE}
+
+library(vegan)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+##### functions #####
+
+veganCovEllipse <- function (cov, center = c(0,0), scale = 1, npoints = 100){
+  theta <- (0:npoints) * 2 * pi/npoints
+  Circle <- cbind(cos(theta), sin(theta))
+  t(center + scale * t(Circle %*% chol(cov)))
+}
+
+pairwise.adonis <- function(x,factors, sim.method, p.adjust.m)
+{
+  library(vegan)
+  co = as.matrix(combn(unique(factors),2))
+  pairs = c()
+  F.Model =c()
+  R2 = c()
+  p.value = c()
+  
+  for(elem in 1:ncol(co)){
+    ad = adonis(x[factors %in% c(as.character(co[1,elem]),as.character(co[2,elem])),] ~
+                  factors[factors %in% c(as.character(co[1,elem]),as.character(co[2,elem]))] , method =sim.method, permutations = 9999);
+    pairs = c(pairs,paste(co[1,elem],'vs',co[2,elem]));
+    F.Model =c(F.Model,ad$aov.tab[1,4]);
+    R2 = c(R2,ad$aov.tab[1,5]);
+    p.value = c(p.value,ad$aov.tab[1,6])
+  }
+  p.adjusted = p.adjust(p.value,method=p.adjust.m)
+  pairw.res = data.frame(pairs,F.Model,R2,p.value,p.adjusted)
+  return(pairw.res)
+}
+
+
+
+
+###### DATA #####
+
+# this is an OTU table (.shared file) output by mothur, all samples are rarrefied to 4200 sequences
+
+otu_table <- "data/bmd_only.opti_mcc.0.03.subsample.shared"
+metadata <- "data/BMD_design.txt"
+
+otu_subsample <- read.table(otu_table, header = TRUE) 
+rownames(otu_subsample) <- otu_subsample$Group # stores the sample id info as the rownames of the dataframe rather
+
+
+meta <- read.table(file = metadata, sep = '\t', header = TRUE)
+
+meta <- meta[meta$name %in% rownames(otu_subsample),]
+
+# this makes sure there are no samples in the OTU table that are not in our metadata
+otu_subsample <- otu_subsample[rownames(otu_subsample) %in% meta$name,]
+
+otu_subsample <- otu_subsample[,-c(1,2,3)]  # removes extra info that mothur includes in their OTU tables
+#sums<-as.data.frame(rowSums((otu_subsample)))
+##################################################
+##################################################
+
+# this calculates the distance matrix
+# today we are using Bray-Curtis distances, but if you wanted a different one you could change it here
+# if you want to use a phylogenetic distance like unifrac you might have to calculate it outside of R and import it
+dist.matr.bray <- vegdist(otu_subsample, method = 'bray')
+otu_subsample_meta <- merge(otu_subsample, meta, by.x = 0, by.y = "name")
+str(otu_subsample)
+#dist.matr.bray.cc <- vegdist(subset(otu_subsample_meta, location == "cc")[,-1712:-1717], method = 'bray')
+#print(otu_subsample_meta[1:10,1711:1717])
+
+# this distance matrix basically contain all pairwise similarities, giving you information on how similar any given sample is to another sample
+
+#################
+# this is vegan's function to make an NMDS ordination
+# the goal of an ordination is to represent the distances or similarities calculated in our distance matrix as spatial distances
+# you can run NMDS in as many dimensions as you'd like though it's hard to visualize anything other than 2 or 3.
+
+mds <- metaMDS(dist.matr.bray, k = 2,trymax = 1000, autotransform = FALSE)
+
+# the stress of an ordination is an important metric to report.  Basically it tells you how well the spatial distances given in the NMDS represent the actual distances or similarities from your distance matrix
+
+
+mds$stress
+
+# a lower stress means the spatial distances in your NMDS more accurately represent your calculated similarites. <0.2 is basically required, <0.1 is better but uncommon. If its bad, maybe you need to recalculate the mds line above and use transformed data 
+#autotransform = TRUE
+
+# I like to merge my NMDS coordinates in together with my metadata to make one big dataframe, I think this makes plotting easier later on
+
+nmds <-as.data.frame(mds$points)
+nmds$group <- rownames(nmds)
+metanmds <- merge(meta, nmds, by.x = 'name', by.y = 'group')
+metanmds$day <- factor(metanmds$day)
+metanmds$location <- factor(metanmds$location)
+metanmds$trt <- factor(metanmds$trt)
+metanmds$group <- factor(metanmds$group)
+
+
+
+
+
+
+# this generates a dataframe containing the group centroids
+
+NMDS.mean <- aggregate(metanmds[,8:9], list(group=metanmds$group), mean)
+colnames(NMDS.mean) <- c('design', 'groupX', 'groupY')
+
+# merging the group centroids with the rest of the NMDS data #
+metanmds <- merge(metanmds, NMDS.mean , by.x = 'group', by.y='design')
+
+str(metanmds)
+metanmds$day <- factor(metanmds$day)
+
+
+### ok now we have our metaNMDS dataframe, lets try some plotting ###
+### super brief into to ggplot2, you feed in data to the ggplot() function then add different 'geoms' layer by layer
+### you map aspects of your data to visual features using aesthetics 'aes()'
+### only things that you want to change according to your data should go inside aes()
+### things you want to be the same for all aspects of your plot should go outside of aes()
+
+```
+
+```{r}
+ggplot(metanmds, aes(x=MDS1, y=MDS2)) + geom_point(aes(color=location, shape=trt, alpha = day)) +
+  labs(x='NMDS 1', y= 'NMDS 2', caption = paste('Ordination stress: ', round(mds$stress, digits = 2)))
+ggsave("output/nmds_all.png", height = 5, width = 7)
+```
+
+```{r}
+
+# lets simplify this plot because there is too much going on. Instead of seeing all the points, Lets just plot the centroids and see how they fall out. We could do the ellipses around the centroids without all the other points, we'll see how it goes.
+
+
+########## ellipse #############
+
+# this is a vegan function to plot ordinations, we are using this to get the ordination information into a form where we can use ggplot2
+# vegan has pretty good plotting fucntionality but i haven't really learned it
+# we are using this vegan function to calculate standard error elipses around each of our groups
+
+######
+# there is some weirdness in R where the order of your data is critical, and sometimes things get reordered when you run
+# functions, you shouldn't assume that your samples are in the same order in an NMDS object as they are in your input data
+# this is how I check this:
+
+nmds$group == metanmds$name  # this is a problem, we need these two dataframes in the same order...
+#metanmds$group <- as.character(metanmds$group)
+metanmds <- metanmds[match(nmds$group,metanmds$name),] # ok I think this works as long as $group isnt a factor...
+nmds$group == metanmds$name  # hurray!
+############
+
+ord <- ordiellipse(mds, metanmds$group, label = TRUE, conf = .95, kind = 'se', draw = 'none')
+
+# this little loop generates a dataframe containing the ellipse data for each group
+
+df_ell <- data.frame()
+for (d in levels(metanmds$group)[-c(43:45,61:62,70)]){
+  df_ell <- rbind(df_ell, cbind(as.data.frame(with(metanmds[metanmds$group == d,],
+          veganCovEllipse(ord[[d]]$cov, ord[[d]]$center, ord[[d]]$scale))),group=d))
+}
+
+colnames(df_ell) <- c('MDS1', 'MDS2', 'design') # just making it so our column names are consistent
+
+# now we are adding metadata to the ellipse dataframe
+# probably an easier way to do this but oh well...
+
+meta_sub <- meta[,-1]
+meta_sub2 <- unique(meta_sub)
+df_ell2 <- merge(df_ell, meta_sub2, by.x = 'design', by.y = 'group')
+str(df_ell2)
+df_ell2$day <- factor(df_ell2$day)
+
+
+
+ggplot(metanmds, aes(x=groupX, y=groupY)) +
+  geom_point(aes(color=day, shape=trt)) + 
+  geom_path(data = df_ell2, aes(x=MDS1, y=MDS2, group=design, color=day))
+```
+
+```{r}
+
+ggplot(metanmds, aes(x=groupX, y=groupY)) +
+  geom_point(aes(color=day, shape=trt)) + 
+  geom_polygon(data = df_ell2, aes(x=MDS1, y=MDS2, group=design, fill=day), alpha = 0.25) + 
+  labs(x='NMDS 1', y= 'NMDS 2', caption = paste('Ordination stress: ', round(mds$stress, digits = 2))) +
+  facet_grid(.~location) +
+  theme(legend.key.size = unit(8, "point"))
+
+ggsave("output/ellipses2.png", height = 3, width = 8.5)
+
+ggplot(metanmds, aes(x=MDS1, y=MDS2)) +
+  geom_point(aes(color=day, shape=trt)) + 
+  geom_segment(aes(x=MDS1, y=MDS2, xend=groupX, yend=groupY, color=day), size = .3) + 
+  geom_polygon(data = df_ell2, aes(x=MDS1, y=MDS2, group=design, fill=day), alpha = 0.25) + 
+  facet_grid(.~location)
+
+##Too crazy
+```
+
+
+```{r}
+#Data could be sliced and diced the way that you would like to see it. For example:
+
+ggplot(subset(metanmds, location == "cc"), aes(x=groupX, y=groupY)) +
+  geom_point(aes(color=day, shape=trt)) + 
+  geom_polygon(data = subset(df_ell2, location == "cc"), aes(x=MDS1, y=MDS2, group=design, fill=day), alpha = 0.25) + 
+  #geom_segment(aes(x=MDS1, y=MDS2, xend=groupX, yend=groupY, color=day), size = .3) +
+  facet_grid(.~day) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(x='NMDS 1', y= 'NMDS 2', caption = paste('Ordination stress: ', round(mds$stress, digits = 2))) +
+  #theme(legend.text=element_text(size=10)) +
+  theme(legend.key.size = unit(8, "point"))
+#ggsave("output/cecal_nmds_facet-day.png", width = 7, height = 2)
+
+```
+
+
+```{r}
+
+###################################### ###########################################
+# stats
+
+# this website is a great resource https://sites.google.com/site/mb3gustame/
+
+# PERMANOVA with Adonis
+# are the differences we are seeing in the NMDS statistically significant?
+# PERMANOVA tests for differences in position and dispersion at the same time, if you get a significant result you need
+# to determind if the dispersion of your group is partially responsible
+
+
+# this will run a PERMANOVA on all possible pairwise comparisons in your data based on the factor you feed it.
+# unfortunately we are not interested in most of these comparisons so we will have to prune things down a little bit
+
+row.names(otu_subsample) == meta$name
+
+PW.Adonis <- pairwise.adonis(x = otu_subsample[1:30,], factors = c(rep("ctrl", 10), rep("sub", 10), rep("ther", 10)), sim.method="bray", p.adjust.m = "none")
+
+locations <- unique(meta$location)
+days <- unique(meta$day)
+otu_subsample_meta <- merge(otu_subsample, meta, by.x = 0, by.y = "name")
+row.names(otu_subsample_meta) <- otu_subsample_meta$Row.names
+otu_subsample_meta <- otu_subsample_meta[,-1]
+rm(PW.Adonis)
+#l <- "cc"
+#d <- 7
+for(l in locations){
+  print(l)
+  for(d in days){
+    print(d)
+    temp_otu <- subset(otu_subsample_meta, location == l & day == d)[,-1710:-1716]
+    temp_meta <- subset(meta, location == l & day == d)$group
+    print("Groups")
+    print(row.names(temp_otu))
+    print("OTU samples")
+    print(temp_meta)
+    temp.PW.Adonis <- pairwise.adonis(x = temp_otu, factors = temp_meta, sim.method="bray", p.adjust.m = "none")
+    if (exists("PW.Adonis")) {
+      PW.Adonis <- rbind(PW.Adonis, temp.PW.Adonis)
+    } else {
+      PW.Adonis <- temp.PW.Adonis
+    }
+  }
+}
+
+PW.Adonis$FDR.q.value <- p.adjust(PW.Adonis$p.value, method = "BH")
+PW.Adonis$BF.corr <- PW.Adonis$p.value*nrow(PW.Adonis)
+
+PW.Adonis$pairs2 <- PW.Adonis$pairs
+PW.Adonis <- separate(PW.Adonis, col = pairs2, into = c("day", "location", "trt1", "location_rep", "trt2"), sep = "_")
+PW.Adonis <- separate(PW.Adonis, col = day, into = c("d", "day"), sep = "d")
+PW.Adonis <- separate(PW.Adonis, col = trt1, into = c("trt1", "vs", "day2"), sep = " ")
+PW.Adonis <- unite(PW.Adonis, col = "pair", c("trt1", "trt2"))
+PW.Adonis <- PW.Adonis[,c(-8,-12:-14)]
+
+write.table(PW.Adonis,"output/Adonis-Results.csv",sep=",", row.names = FALSE) 
+
+#PW.Adonis <- read.csv("../output/Adonis-Results2.csv")
+
+
+str(PW.Adonis)
+PW.Adonis$day <- as.numeric(PW.Adonis$day)
+PW.Adonis$location <- factor(PW.Adonis$location, levels = c("jc", "ic", "cc"))
+PW.Adonis$pair <- factor(PW.Adonis$pair, levels = c("ctrl_sub", "ctrl_ther", "sub_ther"))
+PW.Adonis$sig <- ifelse(PW.Adonis$BF.corr<0.05, 'sig', 'NS')
+sigPalette <- c("red", "black")
+names(sigPalette) <- levels(c("sig", "NS"))
+#filter(PW.Adonis, location == 'cc') %>%
+
+ggplot(PW.Adonis, aes(x=day, y=F.Model, shape=pair)) +
+  geom_line() +
+  geom_vline(xintercept=35, color = 'black', linetype = "dotted") + 
+  geom_point(aes(color=sig), size=2) + 
+  ylim(c(0,10)) +
+  facet_grid(.~location) +
+  #geom_text(aes(label = BF.corr), hjust=0, vjust=0, size=3) +
+  ggtitle('Dissimilarity of microbiota over time', subtitle = 'PERMANOVA F statistic at each timepoint, how different are the diets at each timepoint? ') 
+ggsave("output/Fstat_permanova.png", height = 3, width = 10)
+```
+
+```{r}
+
+### dispersion stuff using vegan's betadisper() function ###
+# how variable are the groups?  How spread out are the samples within each group
+
+## the good thing about this is that they have a pairwise method already built in ##
+
+dispers <- betadisper(dist.matr.bray, group = meta$group)
+pdispers <- permutest(dispers, pairwise = TRUE)
+
+dispersdf <- data.frame(dispers$distances)
+dispersdf$group <- rownames(dispersdf)
+meta$name == dispersdf$group  # checks that there is no weird order thing happening
+metadisp <- merge(meta, dispersdf, by.x = 'name', by.y = 'group')
+metadisp$day <- factor(metadisp$day)
+
+dispgroups <- summarize(group_by(metadisp, group), average_dist=mean(dispers.distances))
+
+dispgroups <- unique(inner_join(dispgroups, meta)) # this is a different way to do a merge()
+
+
+
+metadisp %>% 
+  #filter(location == 'cc') %>%
+  ggplot(aes(x=day, y=dispers.distances, fill = trt, group = group)) + 
+  geom_boxplot() + scale_fill_brewer(palette = 'Dark2') + 
+  #ylim(c(.15,.7)) + 
+  facet_grid(location~.) +
+  ylab("Average distance to the group median") + ggtitle("Cecal beta diversity dispersion over time")
+#ggsave("output/dispersion.png", height = 6, width = 5)
+```
+
+OK so now we move forward to using phyloseq to investigate the taxonomic composition of the different communities.
+
+```{r}
+#Load libraries
+library(ggplot2)
+library(vegan)
+library(dplyr)
+library(scales)
+library(grid)
+library(reshape2)
+library(phyloseq)
+library(tidyr)
+```
+####Data Import
+We will import three files:
+1. mothur shared file
+2. mothur generated taxonomy file
+3. metadata
+For this portion of the analysis I will use the "supervised" otu table not the 97% OTU definition that was used in the diversity analysis.
+
+There is a very handy dandy phyloseq function to convert mothur output into a phyloseq object `import_mothur`. So lets do that.
+
+```{r}
+#Assign varibles for the paths of the data to import
+sharedfile <- "data/bmd_only.tax.shared"
+taxfile <- "data/stability.trim.contigs.good.unique.good.filter.unique.precluster.pick.pick.abund.rdp.wang.tx.1.cons.taxonomy"
+mapfile <- "data/BMD_design.txt"
+
+#Import mothur data
+mothur_data <- import_mothur(mothur_shared_file = sharedfile, mothur_constaxonomy_file = taxfile)
+head(meta)
+meta$day <- factor(meta$day)
+```
+
+We convert this dataframe into phyloseq format with a simple constructor `sample_data`. The only formatting required to merge the sample data into a phyloseq object is that the rownames must match the sample names in your shared and taxonomy files.
+
+```{r}
+metadata <- sample_data(meta)
+rownames(metadata) <- metadata$name
+
+#Merge this into our phyloseq object
+BMD_data <- merge_phyloseq(mothur_data, metadata)
+BMD_data
+```
+Lets check some things to make sure everything looks alright. First taxonomy level names
+
+```{r}
+colnames(tax_table(BMD_data))
+
+colnames(tax_table(BMD_data)) <- c("Kingdom", "Phylum", "Class", 
+  "Order", "Family", "Genus")
+```
+
+This is also a good time to check all your samples and taxa to make sure you dont need to filter out PCR negative controls or mitochondria or chloroplast OTUs out of your dataset. In my case this has already been done.
+
+So now we will make some beautiful stacked barplots to get an idea of what is going on in these samples.
+
+```{r}
+# Set colors for plotting
+my_colors <- c(
+  '#a6cee3','#1f78b4','#b2df8a','#33a02c','#fb9a99','#e31a1c',
+  '#fdbf6f','#ff7f00','#cab2d6','#6a3d9a','#ffff99','#b15928', 
+  "#CBD588", "#5F7FC7", "orange","#DA5724", "#508578", "#CD9BCD",
+   "#AD6F3B", "#673770","#D14285", "#652926", "#C84248", 
+  "#8569D5", "#5E738F","#D1A33D", "#8A7C64", "#599861", "black"
+)
+
+#If you want different taxonomic level, find and replace the taxonomic level listed here
+my_level <- c("Phylum", "Family", "Genus")
+rm(bmd.summary)
+
+for(ml in my_level){
+  print(ml)
+
+  bmd.summary <- BMD_data %>%
+    tax_glom(taxrank = ml) %>%                     # agglomerate at Family level
+    transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+    psmelt()  %>%                                           # Melt to long format
+    group_by(group, get(ml)) %>%
+    summarise(Abundance.average=mean(Abundance)) 
+  names(bmd.summary)[2] <- ml
+  
+  bmd.taxa.average <- bmd.summary %>% 
+    group_by(get(ml)) %>%
+    summarise(taxa.average=mean(Abundance.average))
+  names(bmd.taxa.average)[1] <- ml
+  
+  # merging the phyla means with the metadata #
+  bmd.summary <- merge(bmd.summary, bmd.taxa.average)
+  bmd_meta <- merge(bmd.summary, unique(meta[,-1]) , by = 'group')
+  
+  abund_filter <- 0.01
+  bmd_meta2 <- filter(bmd_meta, taxa.average>abund_filter)
+  str(bmd_meta2)
+  bmd_meta2$location <- factor(bmd_meta2$location, levels = c("jc", "ic", "cc"))
+  unique(bmd_meta2[,2])
+  
+  # Plot 
+  ggplot(bmd_meta2, aes(x = trt, y = Abundance.average, fill = get(ml))) + 
+    facet_grid(location~day) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = my_colors) +
+    # Remove x axis title
+    #theme(axis.title.x = element_blank()) + 
+    ylim(c(0,1)) +
+    guides(fill = guide_legend(reverse = F, keywidth = .5, keyheight = .5, ncol = 1)) +
+    theme(legend.text=element_text(size=8)) +
+    #theme(legend.position="bottom") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+    ylab("Relative Abundance") +
+    ggtitle(paste0(ml, " (>", abund_filter * 100,"%) Composition of turkey GI tract \n and impact of BMD treatment")) 
+  ggsave(paste0("output/", ml, "BarPlot_AllSamples.png"), height = 5)
+  
+  # Plot with facet by treatment
+  ggplot(bmd_meta2, aes(x = day, y = Abundance.average, fill = get(ml))) + 
+    facet_grid(location~trt) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = my_colors) +
+    # Remove x axis title
+    #theme(axis.title.x = element_blank()) + 
+    ylim(c(0,1)) +
+    guides(fill = guide_legend(reverse = F, keywidth = .5, keyheight = .5, ncol = 1)) +
+    theme(legend.text=element_text(size=8)) +
+    #theme(legend.position="bottom") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+    ylab("Relative Abundance") +
+    ggtitle(paste0(ml, " (>", abund_filter * 100,"%) Composition of turkey GI tract \n and impact of BMD treatment"))
+  ggsave(paste0("output/", ml, "TimeBarPlot_AllSamples.png"), height = 5)
+}
+
+```
+
+
