@@ -10,7 +10,7 @@ This Markdown document outlines how the 16S output from mothur were used to crea
 Produce boxplots of diversity estimates from the BMD experiment
 
 ```{r setup}
-knitr::opts_knit$set(root.dir = '~/PATH/TO/BMD_TURKEY')
+knitr::opts_knit$set(root.dir = '~/Documents/programming/ANSC595/R_intro/plotting/mothur_example/bmd_turkey-master/')
 
 ```
 
@@ -186,7 +186,7 @@ metanmds <- merge(meta, nmds, by.x = 'name', by.y = 'group')
 metanmds$day <- factor(metanmds$day)
 metanmds$location <- factor(metanmds$location)
 metanmds$trt <- factor(metanmds$trt)
-metanmds$group <- factor(metanmds$group)
+metanmds$day_location_treatment <- factor(metanmds$day_location_treatment)
 
 
 
@@ -195,11 +195,11 @@ metanmds$group <- factor(metanmds$group)
 
 # this generates a dataframe containing the group centroids
 
-NMDS.mean <- aggregate(metanmds[,8:9], list(group=metanmds$group), mean)
+NMDS.mean <- aggregate(metanmds[,8:9], list(group=metanmds$day_location_treatment), mean)
 colnames(NMDS.mean) <- c('design', 'groupX', 'groupY')
 
 # merging the group centroids with the rest of the NMDS data #
-metanmds <- merge(metanmds, NMDS.mean , by.x = 'group', by.y='design')
+metanmds <- merge(metanmds, NMDS.mean , by.x = 'day_location_treatment', by.y='design')
 
 str(metanmds)
 metanmds$day <- factor(metanmds$day)
@@ -241,14 +241,14 @@ metanmds <- metanmds[match(nmds$group,metanmds$name),] # ok I think this works a
 nmds$group == metanmds$name  # hurray!
 ############
 
-ord <- ordiellipse(mds, metanmds$group, label = TRUE, conf = .95, kind = 'se', draw = 'none')
+ord <- ordiellipse(mds, metanmds$day_location_treatment, label = TRUE, conf = .95, kind = 'se', draw = 'none')
 
 # this little loop generates a dataframe containing the ellipse data for each group
 
 df_ell <- data.frame()
-for (d in levels(metanmds$group)[-c(43:45,61:62,70)]){
-  df_ell <- rbind(df_ell, cbind(as.data.frame(with(metanmds[metanmds$group == d,],
-          veganCovEllipse(ord[[d]]$cov, ord[[d]]$center, ord[[d]]$scale))),group=d))
+for (d in levels(metanmds$day_location_treatment)[-c(43:45,61:62,70)]){
+  df_ell <- rbind(df_ell, cbind(as.data.frame(with(metanmds[metanmds$day_location_treatment == d,],
+          veganCovEllipse(ord[[d]]$cov, ord[[d]]$center, ord[[d]]$scale))),day_location_treatment=d))
 }
 
 colnames(df_ell) <- c('MDS1', 'MDS2', 'design') # just making it so our column names are consistent
@@ -258,7 +258,7 @@ colnames(df_ell) <- c('MDS1', 'MDS2', 'design') # just making it so our column n
 
 meta_sub <- meta[,-1]
 meta_sub2 <- unique(meta_sub)
-df_ell2 <- merge(df_ell, meta_sub2, by.x = 'design', by.y = 'group')
+df_ell2 <- merge(df_ell, meta_sub2, by.x = 'design', by.y = 'day_location_treatment')
 str(df_ell2)
 df_ell2$day <- factor(df_ell2$day)
 
@@ -340,7 +340,7 @@ for(l in locations){
   for(d in days){
     print(d)
     temp_otu <- subset(otu_subsample_meta, location == l & day == d)[,-1710:-1716]
-    temp_meta <- subset(meta, location == l & day == d)$group
+    temp_meta <- subset(meta, location == l & day == d)$day_location_treatment
     print("Groups")
     print(row.names(temp_otu))
     print("OTU samples")
@@ -396,7 +396,7 @@ ggsave("output/Fstat_permanova.png", height = 3, width = 10)
 
 ## the good thing about this is that they have a pairwise method already built in ##
 
-dispers <- betadisper(dist.matr.bray, group = meta$group)
+dispers <- betadisper(dist.matr.bray, group = meta$day_location_treatment)
 pdispers <- permutest(dispers, pairwise = TRUE)
 
 dispersdf <- data.frame(dispers$distances)
@@ -405,7 +405,7 @@ meta$name == dispersdf$group  # checks that there is no weird order thing happen
 metadisp <- merge(meta, dispersdf, by.x = 'name', by.y = 'group')
 metadisp$day <- factor(metadisp$day)
 
-dispgroups <- summarize(group_by(metadisp, group), average_dist=mean(dispers.distances))
+dispgroups <- summarize(group_by(metadisp, day_location_treatment), average_dist=mean(dispers.distances))
 
 dispgroups <- unique(inner_join(dispgroups, meta)) # this is a different way to do a merge()
 
@@ -413,7 +413,7 @@ dispgroups <- unique(inner_join(dispgroups, meta)) # this is a different way to 
 
 metadisp %>% 
   #filter(location == 'cc') %>%
-  ggplot(aes(x=day, y=dispers.distances, fill = trt, group = group)) + 
+  ggplot(aes(x=day, y=dispers.distances, fill = trt, group = day_location_treatment)) + 
   geom_boxplot() + scale_fill_brewer(palette = 'Dark2') + 
   #ylim(c(.15,.7)) + 
   facet_grid(location~.) +
@@ -499,7 +499,7 @@ for(ml in my_level){
     tax_glom(taxrank = ml) %>%                     # agglomerate at Family level
     transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
     psmelt()  %>%                                           # Melt to long format
-    group_by(group, get(ml)) %>%
+    group_by(day_location_treatment, get(ml)) %>%
     summarise(Abundance.average=mean(Abundance)) 
   names(bmd.summary)[2] <- ml
   
@@ -510,7 +510,7 @@ for(ml in my_level){
   
   # merging the phyla means with the metadata #
   bmd.summary <- merge(bmd.summary, bmd.taxa.average)
-  bmd_meta <- merge(bmd.summary, unique(meta[,-1]) , by = 'group')
+  bmd_meta <- merge(bmd.summary, unique(meta[,-1]) , by = 'day_location_treatment')
   
   abund_filter <- 0.01
   bmd_meta2 <- filter(bmd_meta, taxa.average>abund_filter)
